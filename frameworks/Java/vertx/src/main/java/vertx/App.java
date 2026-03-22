@@ -92,6 +92,8 @@ public class App extends VerticleBase implements Handler<HttpServerRequest> {
   private static final String SELECT_FORTUNE = "SELECT id, message FROM fortune";
   private static final String SELECT_WORLDS = "SELECT id, randomnumber FROM world";
 
+  private static final Tuple[] tupleCache = new Tuple[10000];
+
   public static CharSequence createDateHeader() {
     return HttpHeaders.createOptimized(DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now()));
   }
@@ -107,6 +109,17 @@ public class App extends VerticleBase implements Handler<HttpServerRequest> {
     final var boxedRnd = BOXED_RND[rndValue - 1];
     assert boxedRnd.intValue() == rndValue;
     return boxedRnd;
+  }
+
+  static int primitiveRandomWorldNumber() {
+    final int rndValue = ThreadLocalRandom.current().nextInt(1, 10001);
+    return rndValue;
+  }
+
+  static Tuple getRandomTuple() {
+    final int rndValue = primitiveRandomWorldNumber();
+    final Tuple tuple = tupleCache[rndValue - 1];
+    return tuple;
   }
 
   private HttpServer server;
@@ -159,6 +172,9 @@ public class App extends VerticleBase implements Handler<HttpServerRequest> {
       plaintextHeaders = plaintextHeaders();
       jsonHeaders = jsonHeaders();
     });
+    for (int i = 0; i < 10000; i++) {
+        tupleCache[i] = Tuple.of(i + 1);
+    }
     PgConnectOptions options = new PgConnectOptions();
     options.setDatabase(config.getString("database", "hello_world"));
     options.setHost(config.getString("host", "tfb-database"));
@@ -292,7 +308,7 @@ public class App extends VerticleBase implements Handler<HttpServerRequest> {
 
   private void handleDb(HttpServerRequest req) {
     HttpServerResponse resp = req.response();
-    SELECT_WORLD_QUERY.execute(Tuple.of(boxedRandomWorldNumber())).onComplete(res -> {
+    SELECT_WORLD_QUERY.execute(getRandomTuple()).onComplete(res -> {
       if (res.succeeded()) {
         RowIterator<Row> resultSet = res.result().iterator();
         if (!resultSet.hasNext()) {
@@ -335,7 +351,7 @@ public class App extends VerticleBase implements Handler<HttpServerRequest> {
       client.group(/*queries, */c -> {
         for (int i = 0; i < queries; i++) {
           c.preparedQuery(SELECT_WORLD)
-                  .execute(Tuple.of(boxedRandomWorldNumber()))
+                  .execute(getRandomTuple())
                   .onComplete(this);
         }
       });
@@ -382,16 +398,15 @@ public class App extends VerticleBase implements Handler<HttpServerRequest> {
       client.group(/*worldsToUpdate.length, */c -> {
         final PreparedQuery<RowSet<Row>> preparedQuery = c.preparedQuery(App.SELECT_WORLD);
         for (int i = 0; i < worldsToUpdate.length; i++) {
-          final Integer id = boxedRandomWorldNumber();
           final int index = i;
-          preparedQuery.execute(Tuple.of(id)).onComplete(res -> {
+          preparedQuery.execute(getRandomTuple()).onComplete(res -> {
             if (!failed) {
               if (res.failed()) {
                 failed = true;
                 sendError(request, res.cause());
                 return;
               }
-              worldsToUpdate[index] = new World(res.result().iterator().next().getInteger(0), boxedRandomWorldNumber());
+              worldsToUpdate[index] = new World(res.result().iterator().next().getInteger(0), primitiveRandomWorldNumber());
               if (++selectWorldCompletedCount == worldsToUpdate.length) {
                 randomWorldsQueryCompleted();
               }
